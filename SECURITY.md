@@ -5,3 +5,5 @@ Please report a vulnerability privately, through this repository's
 
 A hole in a guard (a way to merge past it, forge a result, or reset the
 review count) counts as a vulnerability.
+
+The `public-gate` check runs on every PR.
