@@ -1,0 +1,17 @@
+# guard-builder-Opus5.5-agent, 2026-10-28
+# The owner owns the risk map's paths. A PR touching one waits for the
+# owner's approval (the protect-main ruleset: 0 approvals, code-owner review
+# on). A PR touching none merges itself once every required check is green.
+# The agent login can't approve its own PR.
+#
+# Two states, checked by verify-install.sh codeowners:
+# - No docs-public/guard-data/risk-map.txt on main yet: the one line
+#   "* @<owner-login>" below. Every slice is risky, every PR waits.
+# - A map on main: the "*" line goes, replaced by one line per map line,
+#   same order: "/<glob> @<owner-login>" (docs/claude-pkg/TEMPLATE-RISK-MAP.md).
+#   Changed in the same PR that adds or edits the map. Kit seed: .github/**,
+#   githooks/**, docs-public/guard-data/{risk-map.txt,expected-protection.json,
+#   runtime.txt} (one line each), docs-public/project-rules.md,
+#   specs/features/*/brief.md.
+# BLANK: replace <owner-login> with the owner's GitHub login.
+* @<owner-login>

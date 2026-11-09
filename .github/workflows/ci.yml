@@ -1,0 +1,21 @@
+# kit-keeper-Opus5.5-agent, 2026-11-09: every guard's unit tests and the action pins
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Run every test
+        run: bash guards/tests/run-all.sh

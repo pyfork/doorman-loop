@@ -1,0 +1,25 @@
+# kit-reviewer-Opus5.5-agent, 2026-11-01
+# The trigger for owner-approval.yml, and nothing else. A review event runs
+# the PR's own copy of a workflow and can't use the reviewer environment,
+# so this job holds no secret and does no work: owner-approval.yml runs on
+# main when this finishes, and trusts nothing from it but the PR number.
+name: owner-review
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions: {}
+
+jobs:
+  # Only the owner's reviews matter. The reviewer app posts a review on every
+  # run, and each fired owner-approval for nothing. A skipped
+  # job ends the run "skipped", which owner-approval ignores. This filter only
+  # saves runs: owner-approval checks the approval itself
+  signal:
+    if: github.event.review.user.login == vars.GUARD_OWNER_LOGIN
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Hand over to owner-approval
+        run: echo "A review was submitted; owner-approval runs on main next."

@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# kit-keeper-Opus5.5-agent, 2026-09-28
+# Template: the scaffold copies this to .git/hooks/pre-push (local, never
+# saved in git) before the project's first commit.
+# Refuses any push that would put the private kit on GitHub: a file under
+# docs/, or any file named CLAUDE*.md, in any commit being pushed. Once
+# pushed to a public repository, such a file stays in the history.
+#
+# kit-keeper-Opus5.5-agent, 2026-10-14: also refuses any new
+# commit whose message, file names or added lines contain a private string
+# (the notes repo's name, its path), case-insensitive. The list is
+# .git/info/private-strings, one fixed string per line: inside .git, so it
+# can never be committed, and set up per clone like this hook. Missing list:
+# refused (fail closed); an empty file means "no private strings".
+set -u
+# kit-keeper-Opus5.5-agent, 2026-10-19: --git-common-dir, so every worktree
+# reads the one list in the main .git (--git-dir is per worktree).
+list="$(git rev-parse --git-common-dir)/info/private-strings"
+if [ ! -f "$list" ]; then
+  echo "PUSH REFUSED: $list is missing. Create it (scaffold Step 3a): one private string per line, or an empty file if there are none." >&2
+  exit 1
+fi
+pats="$(grep -v '^[[:space:]]*$' "$list" | grep -v '^#' || true)"
+zero='0000000000000000000000000000000000000000'
+bad=""
+priv=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue            # deleting a branch
+  if [ "$remote_sha" = "$zero" ]; then
+    commits="$(git rev-list "$local_sha" --not --remotes)"
+  else
+    commits="$(git rev-list "$remote_sha..$local_sha")"
+  fi
+  for c in $commits; do
+    hits="$(git ls-tree -r --name-only "$c" | grep -E '^docs/|(^|/)CLAUDE[^/]*\.md$' | head -5)"
+    [ -z "$hits" ] || bad="$bad$(printf '%s\n' "$hits" | sed "s|^|  ${c:0:7} ${local_ref#refs/heads/}: |")"$'\n'
+    # Private strings: message, then added lines and new file names. The
+    # match itself is never printed, only where it is
+    if [ -n "$pats" ]; then
+      where=""
+      git log -1 --format=%B "$c" | grep -qiF -- "$pats" && where="commit message"
+      if git diff-tree -r -p --root --no-color --no-ext-diff -M "$c" | grep -E '^(\+|rename to |copy to )' | grep -qiF -- "$pats"; then
+        where="${where:+$where, }added lines or file names"
+      fi
+      [ -z "$where" ] || priv="$priv  ${c:0:7} ${local_ref#refs/heads/}: $where"$'\n'
+    fi
+  done
+done
+if [ -n "$bad" ]; then
+  echo "PUSH REFUSED: private kit files would go public." >&2
+  printf '%s' "$bad" | sort -u | head -20 >&2
+  echo "Fix: make sure .gitignore ignores docs/ and CLAUDE*.md, remove the files from these commits, then push again. Never use --no-verify to get past this." >&2
+  exit 1
+fi
+if [ -n "$priv" ]; then
+  echo "PUSH REFUSED: a private string (see $list) is in these commits." >&2
+  printf '%s' "$priv" | sort -u | head -20 >&2
+  echo "Fix: reword or remove it, rewrite these commits (the string must leave the history, not only the last commit), then push again. Never use --no-verify." >&2
+  exit 1
+fi
+exit 0
