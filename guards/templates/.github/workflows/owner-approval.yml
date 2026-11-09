@@ -1,0 +1,108 @@
+# kit-reviewer-Opus5.5-agent, 2026-11-01
+# senior-lead-Opus5.5-agent, 2026-11-03: both checks are posted before the comment, and the comment is a REST call
+# that never fails the job (it stopped test-lock from being posted on a plan PR).
+# The owner approves instead of bypass-merging. When a review lands on a PR,
+# this re-posts `slice-review` and `test-lock` as the reviewer app, green,
+# if the owner's approval is the owner's call (owner-call.sh): the owner
+# approved the head commit of a plan PR, a PR of owner-owned files only
+# (guards, briefs, the map), or a PR the review loop sent to them. Auto-merge then merges it once every other required
+# check, the test suite included, is green.
+#
+# workflow_run: this file runs as it is on main. The PR number is the only
+# thing taken from the trigger; the head commit, reviews and labels come
+# from the API. PR files are only diffed by pr-lane.sh, never run.
+# shortcut: an approval dismissed by hand leaves the green check; auto-merge
+# has merged by then, and a push re-runs both checks anyway.
+name: owner-approval
+
+on:
+  workflow_run:
+    workflows: [owner-review]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  owner-approval:
+    # owner-review skips every review but the owner's (that run ends "skipped")
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: reviewer
+    permissions:
+      contents: read
+    steps:
+      - name: Check out main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Sign in as the reviewer app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
+          permission-checks: write
+          permission-pull-requests: read
+          permission-issues: write
+
+      - name: Read the PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          case "${PR:-x}" in *[!0-9]*) echo "No PR number on the triggering run"; exit 0 ;; esac
+          gh api "repos/$GH_REPO/pulls/$PR" > pr.json
+          jq -e '.state == "open" and .base.ref == "main" and .head.repo.full_name == .base.repo.full_name' pr.json > /dev/null \
+            || { echo "Not an open PR into main from this repository"; exit 0; }
+          { echo "number=$PR"; echo "sha=$(jq -r .head.sha pr.json)"; } >> "$GITHUB_OUTPUT"
+
+      - name: Check out the PR into pr-head/
+        if: steps.pr.outputs.sha != ''
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+          path: pr-head
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Post the owner's approval
+        if: steps.pr.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.number }}
+          SHA: ${{ steps.pr.outputs.sha }}
+          OWNER: ${{ vars.GUARD_OWNER_LOGIN }}
+        run: |
+          lane="$(bash .github/scripts/pr-lane.sh . pr-head)"
+          gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate | jq -s 'add // []' > reviews.json
+          gh api "repos/$GH_REPO/issues/$PR/labels" --jq '.[].name' > labels.txt
+          post() { # <check> <summary>
+            jq -n --arg n "$1" --arg sha "$SHA" --arg t "$1: PASS (owner approved ${SHA:0:7})" --arg s "$2" \
+              '{name:$n, head_sha:$sha, status:"completed", conclusion:"success", output:{title:$t, summary:$s}}' \
+              | gh api -X POST "repos/$GH_REPO/check-runs" --input - --jq '.html_url'
+          }
+          greened=""
+          if bash .github/scripts/owner-call.sh reviews.json "$OWNER" "$SHA" "$lane" labels.txt; then
+            post slice-review "The owner approved commit ${SHA:0:7} (lane: $lane). Their approval stands in for the reviewer's verdict on this commit. A new push needs a new approval."
+            greened="\`slice-review\`"
+          else
+            echo "slice-review: not the owner's call (lane $lane), or no owner approval on ${SHA:0:7}"
+          fi
+          if { [ "$lane" = PLAN ] || [ "$lane" = OWNED ]; } && bash .github/scripts/owner-call.sh reviews.json "$OWNER" "$SHA" "$lane"; then
+            post test-lock "The owner approved commit ${SHA:0:7} (lane: $lane): its plan and lock changes are approved. A new push needs a new approval."
+            greened="${greened:+$greened and }\`test-lock\`"
+          fi
+          # The red jobs and the reviewer's FAIL comment stay on the page; say plainly that it can merge now.
+          # Last, and never fatal: the checks above are what merge needs. REST issue comments take the token's
+          # issues: write; `gh pr comment` (GraphQL addComment) needs pull-requests: write and failed the job
+          # before test-lock was posted.
+          if [ -n "$greened" ]; then
+            gh api "repos/$GH_REPO/issues/$PR/comments" -f body="Owner approved \`${SHA:0:7}\` (lane $lane): $greened now green. Ready to merge if every other required check is green; the red \`review-run / ...\` jobs are not required." > /dev/null \
+              || echo "::warning::could not post the owner-approval comment; the checks above are posted"
+          fi

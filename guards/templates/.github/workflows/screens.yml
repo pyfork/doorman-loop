@@ -1,0 +1,61 @@
+# the machine compares the screens; the owner sees only what changed.
+# Every PR: each stand-in page in acceptance/screens/pages.txt, at 390 and 1280 px, light and dark,
+# against its baseline in acceptance/screens/baselines/. A diff fails the job; the zip shows old, new, diff.
+# Baselines are made only here (Linux, pinned Chromium), never on a laptop. To replace them:
+#   gh workflow run screens.yml --ref <branch> -f update=true
+#   gh run download <run-id> -n screens-baselines -D acceptance/screens/baselines
+#   git commit -m "screens: update baselines (run <run-id>, <why>)" && git push
+# The Lead commits them, not the job: a push by the job starts no PR checks (GitHub's rule for its own
+# token), and its runs wait for "Approve workflows to run". The PR's own `screens` run then
+# compares against the committed files, so a picture made anywhere else fails.
+# acceptance/screens/** is on the risk map, so a baseline update waits for the owner.
+# senior-lead-Opus5.5-agent, 2026-11-02; 2026-11-05 the job uploads, the Lead commits
+name: screens
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      update:
+        description: Replace the baselines on this branch with this run's screenshots
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screens-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screens:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Playwright, pinned
+        run: npm install --no-save --no-package-lock @playwright/test@1.63.0 && npx playwright install --with-deps chromium
+      - name: Compare (or update) the screens
+        env:
+          SCREENS_START: ${{ vars.SCREENS_START }}
+          SCREENS_BASE_URL: ${{ vars.SCREENS_BASE_URL }}
+          SCREENS_TEMPLATES: ${{ vars.SCREENS_TEMPLATES }}
+        run: bash .github/scripts/screens.sh ${{ github.event_name == 'workflow_dispatch' && inputs.update && 'update' || 'check' }}
+      - name: Old, new and diff for each screen that changed
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: screens
+          path: screens-out/
+          if-no-files-found: ignore
+      - name: The new baselines, for the Lead to commit
+        if: github.event_name == 'workflow_dispatch' && inputs.update
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: screens-baselines
+          path: acceptance/screens/baselines/
+          if-no-files-found: error
