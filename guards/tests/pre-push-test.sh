@@ -45,6 +45,11 @@ new_repo; mkdir docs; echo k > docs/k.md; git add -f docs; git commit -qm "x"; e
 new_repo; git checkout -q -b feat; echo "$secret" >> a.txt; git commit -qam "x"; out="$(git push origin feat 2>&1)"; rc=$?
 if [ $rc -ne 0 ]; then pass=$((pass+1)); echo "PASS T12 new branch is checked"; else fail=$((fail+1)); echo "FAIL T12 new branch is checked"; fi
 
+new_repo; git checkout -q -b "notes-${secret}"; echo y >> a.txt; git commit -qam "x"; out="$(git push origin "notes-${secret}" 2>&1)"; rc=$?
+if [ $rc -ne 0 ] && ! printf '%s' "$out" | grep -qiF "$secret"; then pass=$((pass+1)); echo "PASS T15 private string in the branch name"; else fail=$((fail+1)); echo "FAIL T15 private string in the branch name"; fi
+new_repo; git checkout -q -b plain; echo y >> a.txt; git commit -qam "x"; out="$(git push origin plain:"x-${secret}" 2>&1)"; rc=$?
+if [ $rc -ne 0 ]; then pass=$((pass+1)); echo "PASS T16 private string in the remote branch name"; else fail=$((fail+1)); echo "FAIL T16 private string in the remote branch name"; fi
+
 # kit-keeper-Opus5.5-agent, 2026-10-19: a linked worktree shares the main
 # .git's hook and list (--git-common-dir); its own git dir has neither.
 new_repo; git worktree add -q -b wt "$tmp/wt" 2>/dev/null; cd "$tmp/wt" || exit 1

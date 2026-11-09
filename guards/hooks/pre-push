@@ -31,9 +31,15 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   else
     commits="$(git rev-list "$remote_sha..$local_sha")"
   fi
+  # kit-keeper-Opus5.5-agent, 2026-11-09: the branch name is pushed too, and
+  # stays in the PR record once public; a matching name is never printed
+  shown="${local_ref#refs/heads/}"
+  if [ -n "$pats" ] && printf '%s\n' "${remote_ref#refs/heads/}" "$shown" | grep -qiF -- "$pats"; then
+    shown="(this branch)"; priv="$priv  $shown: branch name"$'\n'
+  fi
   for c in $commits; do
     hits="$(git ls-tree -r --name-only "$c" | grep -E '^docs/|(^|/)CLAUDE[^/]*\.md$' | head -5)"
-    [ -z "$hits" ] || bad="$bad$(printf '%s\n' "$hits" | sed "s|^|  ${c:0:7} ${local_ref#refs/heads/}: |")"$'\n'
+    [ -z "$hits" ] || bad="$bad$(printf '%s\n' "$hits" | sed "s|^|  ${c:0:7} $shown: |")"$'\n'
     # Private strings: message, then added lines and new file names. The
     # match itself is never printed, only where it is
     if [ -n "$pats" ]; then
@@ -42,7 +48,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
       if git diff-tree -r -p --root --no-color --no-ext-diff -M "$c" | grep -E '^(\+|rename to |copy to )' | grep -qiF -- "$pats"; then
         where="${where:+$where, }added lines or file names"
       fi
-      [ -z "$where" ] || priv="$priv  ${c:0:7} ${local_ref#refs/heads/}: $where"$'\n'
+      [ -z "$where" ] || priv="$priv  ${c:0:7} $shown: $where"$'\n'
     fi
   done
 done

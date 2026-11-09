@@ -1,0 +1,48 @@
+# kit-keeper-Opus5.5-agent, 2026-11-09
+# public-gate: no file in a PR, and none of the PR's text (title, body,
+# branch name, commit messages), matches a private pattern. The patterns
+# come from the PRIVATE_PATTERNS secret. pull_request_target runs this file
+# and the script from main, so a PR can't rewrite its own gate; the PR's
+# code is checked out as data only and never run.
+name: public-gate
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  public-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: The gate, from main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          path: gate
+          persist-credentials: false
+      - name: The PR, as data
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          path: pr
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      # PR text and the secret reach the shell only through env
+      - name: Check files and PR text
+        env:
+          PATTERNS: ${{ secrets.PRIVATE_PATTERNS }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          umask 077
+          printf '%s\n' "$PATTERNS" > "$RUNNER_TEMP/patterns"
+          git -C pr fetch -q origin "$BASE_SHA" 2>/dev/null || true
+          { printf '%s\n' "$TITLE" "$HEAD_REF" "$BODY"; git -C pr log --format=%B "$BASE_SHA..$HEAD_SHA"; } > "$RUNNER_TEMP/text"
+          bash gate/.github/scripts/public-gate.sh "$RUNNER_TEMP/patterns" pr "$RUNNER_TEMP/text"
