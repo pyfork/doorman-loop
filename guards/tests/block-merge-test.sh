@@ -9,13 +9,16 @@ t() {
   got=$?
   if [ "$got" = "$1" ]; then echo "ok   $got $2"; else echo "FAIL want $1 got $got: $2"; fails=$((fails + 1)); fi
 }
+t 0 "gh pr merge 5 --auto --squash"
+t 0 "gh pr ready 5 && gh pr merge 5 --auto --squash"
 t 0 "gh pr merge 5 --auto --merge"
-t 0 "gh pr ready 5 && gh pr merge 5 --auto --merge"
 t 2 "gh pr merge 5"
 t 2 "gh pr merge 5 --merge"
+t 2 "gh pr merge 5 --squash"
+t 2 "gh pr merge 5 --auto --squash --admin"
 t 2 "gh pr merge 5 --auto --merge --admin"
 t 2 "gh pr merge 5 --admin --auto"
-t 2 "gh pr merge 5 --auto --merge && gh pr merge 6 --merge"
+t 2 "gh pr merge 5 --auto --squash && gh pr merge 6 --squash"
 t 2 "gh pr merge 5 --autox"
 t 2 "git merge feature-x"
 t 2 "git push origin main"

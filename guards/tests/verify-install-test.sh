@@ -25,6 +25,11 @@ runtime_record() { # runtime_record <dir> <body>: main's runtime.txt as the API 
   printf '{"content":"%s"}' "$(printf '%b' "$2" | base64 | tr -d '\n')" > "$1/contents_docs-public_guard-data_runtime.txt.json"
 }
 
+saved_copy() { # saved_copy <dir>: expected-protection.json on main = the live rules
+  printf '{"content":"%s"}' "$(jq -S '[.[] | {type, parameters}] | sort_by(.type)' "$1/rules_branches_main.json" | base64 | tr -d '\n')" \
+    > "$1/contents_docs-public_guard-data_expected-protection.json.json"
+}
+
 good() { # writes a correct install into $1
   d="$1"; mkdir -p "$d"
   for f in .github/workflows/slice-review.yml .github/workflows/test-lock.yml .github/workflows/daily-sweep.yml \
@@ -37,11 +42,13 @@ good() { # writes a correct install into $1
     printf '{"value":"%s"}' "${v#*:}" > "$d/actions_variables_${v%%:*}.json"; done
   cat > "$d/rules_branches_main.json" <<'J'
 [{"type":"deletion"},{"type":"non_fast_forward"},
- {"type":"pull_request","parameters":{"require_code_owner_review":true,"required_approving_review_count":0,"require_last_push_approval":false,"dismiss_stale_reviews_on_push":true}},
+ {"type":"pull_request","parameters":{"require_code_owner_review":true,"required_approving_review_count":0,"require_last_push_approval":false,"dismiss_stale_reviews_on_push":true,"allowed_merge_methods":["squash"]}},
  {"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,
    "required_status_checks":[{"context":"slice-review","integration_id":42},{"context":"test-lock","integration_id":42}]}}]
 J
-  echo '{"allow_auto_merge":true}' > "$d/repos_o_r.json"
+  echo '{"allow_auto_merge":true,"squash_merge_commit_message":"PR_BODY"}' > "$d/repos_o_r.json"
+  saved_copy "$d"
+  echo '{"workflow_runs":[{"name":"test-lock","conclusion":"success","created_at":"2026-11-10T00:00:00Z"},{"name":"test-lock","conclusion":"startup_failure","created_at":"2026-11-09T16:00:00Z"}]}' > "$d/actions_runs.json"
   echo '[{"id":7}]' > "$d/rulesets.json"
   echo '{"current_user_can_bypass":"never"}' > "$d/rulesets_7.json"
   echo '{"deployment_branch_policy":{"custom_branch_policies":true,"protected_branches":false}}' > "$d/environments_reviewer.json"
@@ -114,6 +121,20 @@ slip T19 "approval of the most recent reviewable push" \
   "sed -i.bak 's/\"require_last_push_approval\":false/\"require_last_push_approval\":true/' rules_branches_main.json"
 slip T20 "Dismiss stale pull request approvals" \
   "sed -i.bak 's/\"dismiss_stale_reviews_on_push\":true/\"dismiss_stale_reviews_on_push\":false/' rules_branches_main.json"
+
+# guard-builder-Opus5.5-agent, 2026-11-10: squash only, the squash message,
+# the saved copy of the rules, pull_request_target runs that never started
+# (T1's fixture holds an older blocked run fixed since: still OK)
+slip T21 "squash only" \
+  "sed -i.bak 's/\"allowed_merge_methods\":\[\"squash\"\]/\"allowed_merge_methods\":[\"merge\",\"squash\"]/' rules_branches_main.json"
+slip T22 "Pull request title and description" \
+  "echo '{\"allow_auto_merge\":true,\"squash_merge_commit_message\":\"COMMIT_MESSAGES\"}' > repos_o_r.json"
+slip T23 "does not match the live rules" \
+  "sed -i.bak 's/\"require_code_owner_review\":true/\"require_code_owner_review\":false/' rules_branches_main.json"
+slip T24 "latest run failed to start (new-file-check, test-lock)" \
+  "echo '{\"workflow_runs\":[{\"name\":\"test-lock\",\"conclusion\":\"startup_failure\",\"created_at\":\"2026-11-10T01:00:00Z\"},{\"name\":\"test-lock\",\"conclusion\":\"success\",\"created_at\":\"2026-11-09T01:00:00Z\"},{\"name\":\"new-file-check\",\"conclusion\":\"startup_failure\",\"created_at\":\"2026-11-10T01:00:00Z\"},{\"name\":\"ci\",\"conclusion\":\"success\",\"created_at\":\"2026-11-10T01:00:00Z\"}]}' > actions_runs.json"
+slip T25 "can't list the pull_request_target runs" \
+  "rm actions_runs.json"
 
 [ "$fails" -eq 0 ] && echo "verify-install-test: all passed" || echo "verify-install-test: FAILED"
 exit "$fails"
