@@ -54,7 +54,7 @@ while IFS= read -r merge_seg; do
   [ -n "$merge_seg" ] || continue
   if printf '%s' "$merge_seg" | grep -Eq '[[:space:]]--admin([[:space:]=]|$)' \
      || ! printf '%s' "$merge_seg" | grep -Eq '[[:space:]]--auto([[:space:]]|$)'; then
-    deny "Guard 1B: agent sessions never merge PRs. Turn on auto-merge instead (gh pr merge <n> --auto --merge); the owner merges risky PRs."
+    deny "Guard 1B: agent sessions never merge PRs. Turn on auto-merge instead (gh pr merge <n> --auto --squash); the owner merges risky PRs."
   fi
 done <<< "$(printf '%s' "$command" | grep -Eo 'gh[[:space:]]+pr[[:space:]]+merge[^;&|]*' || true)"
 

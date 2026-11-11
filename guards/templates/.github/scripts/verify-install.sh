@@ -5,6 +5,7 @@
 #
 # Usage: verify-install.sh [section ...]   (default: every section)
 #   files codeowners rules bypass environment variables secrets runtime risk-map
+#   workflow-runs
 # Needs GH_REPO (owner/name) and a gh login. Run it as the agent login at
 # install (checklist step 12): a collaborator can read every section. The
 # daily sweep runs only the sections its own token can read
@@ -15,7 +16,7 @@
 # best thing: the login running this script can never bypass.
 set -uo pipefail
 repo="${GH_REPO:?Set GH_REPO to owner/name}"
-sections="${*:-files codeowners rules bypass environment variables secrets runtime risk-map}"
+sections="${*:-files codeowners rules bypass environment variables secrets runtime risk-map workflow-runs}"
 here="$(cd "$(dirname "$0")" && pwd)"
 problems=0
 ok()  { echo "OK       $1"; }
@@ -70,7 +71,20 @@ rules)
   printf '%s' "$rules" | jq -e 'any(.[]; .type == "pull_request" and .parameters.dismiss_stale_reviews_on_push and (.parameters.require_last_push_approval | not))' > /dev/null \
     && ok "rule on main: stale approvals dismissed, last-push approval off" || bad "rule on main: 'Dismiss stale pull request approvals when new commits are pushed' must be on and 'Require approval of the most recent reviewable push' off (on, it holds every routine PR)"
   # routine PRs merge themselves, so repo auto-merge must be on
-  [ "$(gh api "repos/$repo" 2>/dev/null | jq -r '.allow_auto_merge')" = "true" ] && ok "repository: auto-merge allowed" || bad "repository: 'Allow auto-merge' is off (Settings, General, Pull Requests)"
+  repojson="$(gh api "repos/$repo" 2>/dev/null)"
+  [ "$(printf '%s' "$repojson" | jq -r '.allow_auto_merge')" = "true" ] && ok "repository: auto-merge allowed" || bad "repository: 'Allow auto-merge' is off (Settings, General, Pull Requests)"
+  # one commit per PR, and its message is the PR description, so the
+  # commit on main ends with the PR's signature line
+  printf '%s' "$rules" | jq -e 'any(.[]; .type == "pull_request" and ((.parameters.allowed_merge_methods // []) | sort) == ["squash"])' > /dev/null \
+    && ok "rule on main: squash merges only" || bad "rule on main: allowed merge methods must be squash only (ruleset, Require a pull request, Allowed merge methods)"
+  [ "$(printf '%s' "$repojson" | jq -r '.squash_merge_commit_message')" = "PR_BODY" ] && ok "repository: squash message is the PR description" \
+    || bad "repository: the squash default message must be 'Pull request title and description' (Settings, General, Pull Requests); otherwise text lands after the signature line"
+  # the daily sweep compares the live rules with the saved copy; a copy that
+  # already differs at install hides every later change
+  saved="$(api "contents/docs-public/guard-data/expected-protection.json?ref=main" | jq -r '.content // empty' | base64 -d 2>/dev/null | jq -S . 2>/dev/null)"
+  livecopy="$(printf '%s' "$rules" | jq -S '[.[] | {type, parameters}] | sort_by(.type)')"
+  [ -n "$saved" ] && [ "$saved" = "$livecopy" ] && ok "saved copy of the rules matches main" \
+    || bad "docs-public/guard-data/expected-protection.json on main does not match the live rules on main: update it in a PR the owner merges"
   printf '%s' "$rules" | jq -e 'any(.[]; .type == "required_status_checks" and .parameters.strict_required_status_checks_policy)' > /dev/null \
     && ok "rule on main: branches up to date" || bad "rule on main: 'require branches to be up to date' is off"
   for c in slice-review test-lock; do
@@ -147,6 +161,18 @@ risk-map)
     [ "$badmap" -eq 1 ] || ok "risk map: $lines path(s) on main"
   fi
   rm -f "$map" ;;
+
+# guard-builder-Opus5.5-agent, 2026-11-10: a public repository blocks
+# pull_request_target unless an Actions policy allows it, and only an admin
+# can read the policy; a blocked run shows as startup_failure
+workflow-runs)
+  since="$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-7d +%Y-%m-%dT%H:%M:%SZ)"
+  if ! runs="$(api "actions/runs?event=pull_request_target&created=>=$since&per_page=100")"; then
+    bad "can't list the pull_request_target runs"; continue; fi
+  # each workflow's latest run decides: an older blocked run fixed since is fine
+  blocked="$(printf '%s' "$runs" | jq -r '[.workflow_runs | group_by(.name)[] | max_by(.created_at) | select(.conclusion == "startup_failure") | .name] | join(", ")')"
+  [ -z "$blocked" ] && ok "pull_request_target runs: each workflow's latest run started" \
+    || bad "pull_request_target workflows whose latest run failed to start ($blocked): on a public repository, add the Actions policy (Settings, Actions, Policies: Active, .github/workflows/*.yml, Restrict events with every event allowed)" ;;
 
 *) bad "unknown section: $s" ;;
 esac; done

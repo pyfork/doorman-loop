@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      actions: read # read the reviewer environment's branch rules
+      actions: read # the reviewer environment's branch rules, and workflow runs that did not start
       issues: write
       pull-requests: read
       checks: read

@@ -54,6 +54,19 @@ if ! envcheck="$(bash .github/scripts/verify-install.sh environment 2>&1)"; then
   echo >> "$out"; printf '%s\n' "$envcheck" | grep '^PROBLEM' | sed 's/^PROBLEM  /- /' >> "$out"
 fi
 
+# guard-builder-Opus5.5-agent, 2026-11-10: on public repositories GitHub
+# blocks pull_request_target unless an Actions policy allows it; a blocked
+# run never starts, so the required checks it posts never arrive
+nostart="$(gh api "repos/$repo/actions/runs?event=pull_request_target&created=>=$since&per_page=100" \
+  --jq '[.workflow_runs[] | select(.conclusion == "startup_failure")] | group_by(.name) | .[] | "- `\(.[0].name)`: \(length) run(s), last \(.[0].created_at) (\(.[0].html_url))"' 2>&1)" || {
+  found=1; section "⚠️ Couldn't check whether guard checks started"
+  echo "Listing \`pull_request_target\` runs failed:" >> "$out"; echo >> "$out"; printf '%s\n' "$nostart" | head -3 | sed 's/^/- /' >> "$out"; nostart=""; }
+if [ -n "$nostart" ]; then
+  found=1; section "⚠️ Guard checks did not start"
+  echo "These \`pull_request_target\` workflows failed to start, so their required checks never reached the PR. Open one run: if its error names the \`pull_request_target\` policy, add or fix the repository's Actions policy (Settings, Actions, Policies: Active, \`.github/workflows/*.yml\`, Restrict events with \`pull_request_target\` allowed). Any other error: a workflow file is broken." >> "$out"
+  echo >> "$out"; printf '%s\n' "$nostart" >> "$out"
+fi
+
 # guard-builder-Opus5.5-agent, 2026-10-25: locked-checks runs only
 # on the runtime the record on main names; a broken record stops it
 if ! rtcheck="$(bash .github/scripts/verify-install.sh runtime 2>&1)"; then
